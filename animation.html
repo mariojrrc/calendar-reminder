@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      Overlay content. Loaded into a transparent, frameless, click-through
+      BrowserWindow that covers the primary display. The main process destroys
+      the window 12.5s after it is shown, which is 0.5s after the flight ends.
+
+      Banner fields arrive as URL query params (title, time, relative). A tiny
+      script copies them into the DOM with textContent — never innerHTML.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+    />
+    <title>Meeting starting</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        pointer-events: none;
+        user-select: none;
+      }
+
+      /* The whole tow group (banner + line + plane) crosses the screen in 12s. */
+      @keyframes fly-across {
+        from {
+          left: -620px;
+        }
+        to {
+          left: 100vw;
+        }
+      }
+
+      @keyframes bob {
+        0%,
+        100% {
+          transform: translateY(-50%) rotate(-3deg);
+        }
+        50% {
+          transform: translateY(calc(-50% - 22px)) rotate(2deg);
+        }
+      }
+
+      .flight {
+        position: fixed;
+        top: 45%;
+        left: -620px;
+        display: flex;
+        align-items: center;
+        white-space: nowrap;
+        filter: drop-shadow(0 12px 18px rgba(18, 40, 72, 0.28));
+        animation: fly-across 12s linear forwards, bob 2s ease-in-out infinite;
+        will-change: left, transform;
+      }
+
+      .banner {
+        position: relative;
+        width: min(440px, 52vw);
+        height: 72px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 24px;
+        overflow: hidden;
+        background: #fff;
+        border: 4px solid #155bc0;
+        border-radius: 5px;
+      }
+
+      .banner::after {
+        content: "";
+        position: absolute;
+        inset: 7px;
+        border: 2px solid #a8cfff;
+        pointer-events: none;
+      }
+
+      .banner-title {
+        min-width: 0;
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: #12355f;
+        font: 800 clamp(14px, 2vw, 22px) / 1.1 system-ui, sans-serif;
+        letter-spacing: 0.01em;
+      }
+
+      .banner-meta {
+        flex: 0 0 auto;
+        color: #2765ad;
+        font: 700 clamp(12px, 1.4vw, 17px) / 1.1 system-ui, sans-serif;
+      }
+
+      .tow {
+        flex: 0 0 auto;
+        overflow: visible;
+      }
+
+      .plane {
+        flex: 0 0 auto;
+        overflow: visible;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="flight" role="presentation" aria-hidden="true">
+      <div class="banner">
+        <div id="title" class="banner-title"></div>
+        <div id="meta" class="banner-meta"></div>
+      </div>
+
+      <svg class="tow" width="54" height="72" viewBox="0 0 54 72" aria-hidden="true">
+        <path
+          d="M2 36 C18 27 37 27 52 36 C37 45 18 45 2 36Z"
+          fill="none"
+          stroke="#3a5877"
+          stroke-width="2"
+        />
+      </svg>
+
+      <svg
+        class="plane"
+        width="210"
+        height="138"
+        viewBox="0 0 210 138"
+        aria-label="Airplane"
+      >
+        <g stroke="#0c3e91" stroke-width="5" stroke-linejoin="round">
+          <path d="M39 73 L15 50 L39 53 L60 70Z" fill="#2478dc" />
+          <path d="M42 76 L18 93 L44 88 L64 75Z" fill="#1162c5" />
+          <path
+            d="M38 69 C69 53 119 49 167 58 C185 62 198 71 201 78 C194 89 175 94 151 94 L76 91 C56 88 45 82 38 69Z"
+            fill="#65a9ed"
+          />
+          <path d="M96 56 L104 14 L119 14 L142 58Z" fill="#1769cf" />
+          <path d="M116 89 L78 128 L55 127 L84 85Z" fill="#1769cf" />
+          <path
+            d="M166 61 C180 64 191 70 198 77 C190 81 178 82 166 78 C159 74 159 67 166 61Z"
+            fill="#f7fbff"
+          />
+          <path d="M123 94 L141 106 L126 112 L107 94Z" fill="#f7fbff" />
+        </g>
+        <path
+          d="M44 68 C79 58 122 58 164 64"
+          fill="none"
+          stroke="#b9ddff"
+          stroke-width="5"
+          stroke-linecap="round"
+          opacity="0.9"
+        />
+      </svg>
+    </div>
+
+    <script>
+      (function fillBanner() {
+        const params = new URLSearchParams(window.location.search);
+        const title = params.get("title") || "Meeting";
+        const time = params.get("time") || "";
+        const relative = params.get("relative") || "";
+        const meta = [time, relative].filter(Boolean).join(" · ");
+
+        document.getElementById("title").textContent = title;
+        document.getElementById("meta").textContent = meta ? "· " + meta : "";
+      })();
+    </script>
+  </body>
+</html>

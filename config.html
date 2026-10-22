@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      Configuration dashboard. Shows one row per calendar with its connection
+      status, and a button that alternates between Sign In and Sign Out based on
+      whether that service's token file exists on disk.
+
+      All work happens in the main process; this window only renders state and
+      forwards intents over IPC.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"
+    />
+    <title>Calendar Reminder</title>
+    <style>
+      :root {
+        --bg: #10131a;
+        --panel: #191d27;
+        --border: #272d3a;
+        --text: #eef1f6;
+        --muted: #98a1b3;
+        --on: #34d399;
+        --off: #64708a;
+        --accent: #4f8cff;
+        --danger: #f87171;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 28px;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 19px;
+        letter-spacing: -0.01em;
+      }
+
+      .subtitle {
+        margin: 6px 0 24px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .service {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 16px 18px;
+        margin-bottom: 12px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+      }
+
+      .dot {
+        flex: none;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--off);
+      }
+
+      .service[data-connected="true"] .dot {
+        background: var(--on);
+        box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.16);
+      }
+
+      .details {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .name {
+        font-weight: 600;
+      }
+
+      .status {
+        color: var(--muted);
+        font-size: 12.5px;
+      }
+
+      .service[data-connected="true"] .status {
+        color: var(--on);
+      }
+
+      button {
+        flex: none;
+        min-width: 96px;
+        padding: 9px 16px;
+        font: inherit;
+        font-weight: 600;
+        color: #fff;
+        background: var(--accent);
+        border: 0;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+
+      button:hover:not(:disabled) {
+        filter: brightness(1.12);
+      }
+
+      button:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+
+      .service[data-connected="true"] button {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--muted);
+      }
+
+      .service[data-connected="true"] button:hover:not(:disabled) {
+        border-color: var(--danger);
+        color: var(--danger);
+        filter: none;
+      }
+
+      .error {
+        margin-top: 18px;
+        padding: 13px 15px;
+        border: 1px solid rgba(248, 113, 113, 0.35);
+        border-radius: 10px;
+        background: rgba(248, 113, 113, 0.08);
+        color: #fca5a5;
+        font-size: 12.5px;
+        white-space: pre-wrap;
+      }
+
+      .error:empty {
+        display: none;
+      }
+
+      .dev-tools {
+        margin-top: 18px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .dev-tools[hidden] {
+        display: none;
+      }
+
+      .dev-tools button {
+        min-width: 0;
+        background: transparent;
+        border: 1px dashed var(--border);
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      .dev-tools button:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--text);
+        filter: none;
+      }
+
+      .dev-hint {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      footer {
+        margin-top: 26px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.7;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Calendar Reminder</h1>
+    <p class="subtitle">
+      Connected calendars are checked every 60 seconds. An airplane flies across
+      your screen when a meeting is about to start.
+    </p>
+
+    <div id="services"></div>
+    <div id="dev-tools" class="dev-tools" hidden>
+      <button type="button" id="test-flight">Test flight</button>
+      <span class="dev-hint">Local runs only — not shown in packaged builds.</span>
+    </div>
+    <div id="error" class="error" role="alert" aria-live="polite"></div>
+
+    <footer>
+      Closing this window keeps the utility running in the background. Quit from
+      the application menu to stop it.
+    </footer>
+
+    <script>
+      const { ipcRenderer } = require("electron");
+
+      const servicesEl = document.getElementById("services");
+      const errorEl = document.getElementById("error");
+      const devToolsEl = document.getElementById("dev-tools");
+      const testFlightBtn = document.getElementById("test-flight");
+
+      /** Service ids with a request in flight, so their button can be disabled. */
+      const busy = new Set();
+
+      /**
+       * @param {{
+       *   services: Array<{ id: string, label: string, connected: boolean, kind?: string, soon?: boolean }>,
+       *   showTestFlight: boolean
+       * }} payload
+       */
+      function applyDashboard(payload) {
+        render(payload.services);
+        devToolsEl.hidden = !payload.showTestFlight;
+      }
+
+      /**
+       * @param {Array<{ id: string, label: string, connected: boolean, kind?: string, soon?: boolean }>} services
+       */
+      function render(services) {
+        servicesEl.replaceChildren(
+          ...services.map((service) => {
+            const soon = service.soon === true;
+            const row = document.createElement("div");
+            row.className = "service";
+            row.dataset.connected = String(!soon && service.connected);
+
+            const dot = document.createElement("span");
+            dot.className = "dot";
+
+            const details = document.createElement("div");
+            details.className = "details";
+
+            const name = document.createElement("div");
+            name.className = "name";
+            name.textContent = service.label;
+
+            const status = document.createElement("div");
+            status.className = "status";
+            status.textContent = soon
+              ? "Soon"
+              : service.connected
+                ? "Connected"
+                : "Not connected";
+
+            details.append(name, status);
+
+            const button = document.createElement("button");
+            if (soon) {
+              button.textContent = "Soon";
+              button.disabled = true;
+            } else {
+              const action = service.connected ? "sign-out" : "sign-in";
+              const waiting = busy.has(service.id);
+              const isNative = service.kind === "native";
+              button.textContent = waiting
+                ? "Waiting…"
+                : service.connected
+                  ? isNative
+                    ? "Disconnect"
+                    : "Sign Out"
+                  : isNative
+                    ? "Connect"
+                    : "Sign In";
+              button.disabled = waiting;
+              button.addEventListener("click", () => run(service.id, action));
+            }
+
+            row.append(dot, details, button);
+            return row;
+          }),
+        );
+      }
+
+      async function refresh() {
+        applyDashboard(await ipcRenderer.invoke("calendar:get-status"));
+      }
+
+      /**
+       * @param {string} serviceId
+       * @param {"sign-in" | "sign-out"} action
+       */
+      async function run(serviceId, action) {
+        errorEl.textContent = "";
+        busy.add(serviceId);
+        await refresh();
+
+        try {
+          const result = await ipcRenderer.invoke(`calendar:${action}`, serviceId);
+          // The main process reports expected failures (an unfilled client
+          // secret, a cancelled consent screen) as a message to show the user.
+          if (!result.ok) errorEl.textContent = result.message;
+        } catch (error) {
+          errorEl.textContent = error.message;
+        } finally {
+          busy.delete(serviceId);
+          await refresh();
+        }
+      }
+
+      testFlightBtn.addEventListener("click", async () => {
+        errorEl.textContent = "";
+        testFlightBtn.disabled = true;
+        try {
+          const result = await ipcRenderer.invoke("calendar:test-flight");
+          if (!result.ok) errorEl.textContent = result.message;
+        } catch (error) {
+          errorEl.textContent = error.message;
+        } finally {
+          testFlightBtn.disabled = false;
+        }
+      });
+
+      // The main process pushes status after every sign-in and sign-out, so the
+      // dashboard stays correct even when it was not the trigger.
+      ipcRenderer.on("calendar:status-changed", (_event, payload) => {
+        applyDashboard(payload);
+      });
+
+      refresh();
+    </script>
+  </body>
+</html>

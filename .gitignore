@@ -1,0 +1,15 @@
+node_modules/
+dist/
+out/
+*.dmg
+*.AppImage
+google_secret.json
+outlook_secret.json
+google_token.json
+outlook_token.json
+macos_calendar_enabled.json
+native/macos-calendar/bin/
+.tribunal/
+.superpowers/
+.DS_Store
+.superpowers/
